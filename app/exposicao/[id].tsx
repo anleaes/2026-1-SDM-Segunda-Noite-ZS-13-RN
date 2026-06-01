@@ -9,13 +9,15 @@ import {
   criarReserva,
   deleteExposicao,
   deleteExposicaoObra,
+  fetchAvaliacaoExposicao,
   fetchExposicao,
   fetchExposicaoObras,
   fetchObra,
   fetchObras,
+  updateAvaliacao,
   updateExposicao,
 } from '@/api/services';
-import type { Exposicao, ExposicaoObra, ObraArte } from '@/api/types';
+import type { Avaliacao, Exposicao, ExposicaoObra, ObraArte, Pagamento } from '@/api/types';
 import { FormModal, OptionPicker, StatusPicker } from '@/components/forms';
 import { Badge, Button, Card, ErrorState, Input, LoadingScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
@@ -26,7 +28,19 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function nextMonthISO() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 type ObraLink = ExposicaoObra & { titulo?: string };
+
+const METODOS: { value: Pagamento['metodo']; label: string }[] = [
+  { value: 'pix', label: 'PIX' },
+  { value: 'cartao', label: 'Cartao' },
+  { value: 'dinheiro', label: 'Dinheiro' },
+];
 
 export default function ExposicaoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,15 +49,22 @@ export default function ExposicaoDetailScreen() {
   const [obras, setObras] = useState<ObraArte[]>([]);
   const [links, setLinks] = useState<ObraLink[]>([]);
   const [todasObras, setTodasObras] = useState<ObraArte[]>([]);
+  const [avaliacaoExistente, setAvaliacaoExistente] = useState<Avaliacao | null>(null);
   const [nota, setNota] = useState('5');
   const [comentario, setComentario] = useState('');
+  const [metodoPagamento, setMetodoPagamento] = useState<Pagamento['metodo']>('pix');
   const [loading, setLoading] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddObra, setShowAddObra] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [obraId, setObraId] = useState<number | null>(null);
   const [posicao, setPosicao] = useState('Sala 1');
   const [statusExp, setStatusExp] = useState('planejada');
+  const [titulo, setTitulo] = useState('');
+  const [descricao, setDescricao] = useState('');
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
 
   const load = useCallback(async () => {
     const exposicaoId = Number(id);
@@ -51,6 +72,10 @@ export default function ExposicaoDetailScreen() {
     const exp = await fetchExposicao(exposicaoId);
     setExposicao(exp);
     setStatusExp(exp.status);
+    setTitulo(exp.titulo);
+    setDescricao(exp.descricao);
+    setDataInicio(exp.data_inicio);
+    setDataFim(exp.data_fim);
     const linkList = await fetchExposicaoObras(exposicaoId);
     const lista = await Promise.all(
       linkList.map(async (link) => {
@@ -65,7 +90,15 @@ export default function ExposicaoDetailScreen() {
       setTodasObras(all);
       if (!obraId && all[0]) setObraId(all[0].id);
     }
-  }, [id, canStaff, obraId]);
+    if (user && isVisitante) {
+      const av = await fetchAvaliacaoExposicao(user.id, exposicaoId);
+      setAvaliacaoExistente(av);
+      if (av) {
+        setNota(String(av.nota));
+        setComentario(av.comentario);
+      }
+    }
+  }, [id, canStaff, isVisitante, user, obraId]);
 
   useEffect(() => {
     load()
@@ -91,6 +124,29 @@ export default function ExposicaoDetailScreen() {
     const updated = await updateExposicao(exposicao.id, { status: novoStatus as Exposicao['status'] });
     setExposicao(updated);
     Alert.alert('Sucesso', 'Status da exposicao atualizado.');
+  }
+
+  async function salvarEdicao() {
+    if (!exposicao || !titulo.trim()) {
+      Alert.alert('Campos obrigatorios', 'Informe o titulo.');
+      return;
+    }
+    try {
+      setLoadingAction(true);
+      const updated = await updateExposicao(exposicao.id, {
+        titulo: titulo.trim(),
+        descricao,
+        data_inicio: dataInicio,
+        data_fim: dataFim,
+      });
+      setExposicao(updated);
+      setShowEdit(false);
+      Alert.alert('Sucesso', 'Exposicao atualizada.');
+    } catch (e) {
+      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao salvar.');
+    } finally {
+      setLoadingAction(false);
+    }
   }
 
   async function adicionarObra() {
@@ -150,6 +206,7 @@ export default function ExposicaoDetailScreen() {
         {canStaff && (
           <Card>
             <Text style={styles.label}>Gerenciar exposicao (Funcionario)</Text>
+            <Button label="Editar exposicao" variant="secondary" icon="create-outline" onPress={() => setShowEdit(true)} />
             <StatusPicker
               label="Status"
               value={statusExp}
@@ -202,40 +259,61 @@ export default function ExposicaoDetailScreen() {
         {isVisitante && user && (
           <Card>
             <Text style={styles.label}>Acoes do visitante</Text>
+            <StatusPicker label="Metodo de pagamento" value={metodoPagamento} options={METODOS} onSelect={(v) => setMetodoPagamento(v as Pagamento['metodo'])} />
             <View style={styles.actions}>
               <Button
-                label="Comprar ingresso (R$ 60)"
+                label="Comprar ingresso (R$ 60) + pagar"
                 icon="ticket-outline"
                 loading={loadingAction}
-                onPress={() => runAction(() => comprarIngresso(user.id, exposicao.id), 'Ingresso comprado!')}
+                onPress={() =>
+                  runAction(
+                    () => comprarIngresso(user.id, exposicao.id, '60.00', metodoPagamento).then(() => undefined),
+                    'Ingresso comprado e pagamento registrado!',
+                  )
+                }
               />
               <Button
-                label="Reservar visita (4 pessoas)"
+                label="Reservar visita (4 pessoas) + pagar R$ 40"
                 variant="secondary"
                 icon="calendar-outline"
                 loading={loadingAction}
                 onPress={() =>
-                  runAction(() => criarReserva(user.id, exposicao.id, 4, todayISO()), 'Reserva confirmada!')
+                  runAction(
+                    () => criarReserva(user.id, exposicao.id, 4, todayISO(), '40.00', metodoPagamento).then(() => undefined),
+                    'Reserva confirmada e pagamento registrado!',
+                  )
                 }
               />
             </View>
             <Input label="Nota (1-5)" value={nota} onChangeText={setNota} keyboardType="numeric" />
             <Input label="Comentario" value={comentario} onChangeText={setComentario} placeholder="Sua opiniao" />
             <Button
-              label="Enviar avaliacao"
+              label={avaliacaoExistente ? 'Atualizar avaliacao' : 'Enviar avaliacao'}
               variant="secondary"
               icon="star-outline"
               loading={loadingAction}
               onPress={() =>
-                runAction(
-                  () => criarAvaliacao(user.id, exposicao.id, Number(nota), comentario),
-                  'Avaliacao registrada!',
-                )
+                runAction(async () => {
+                  if (avaliacaoExistente) {
+                    await updateAvaliacao(avaliacaoExistente.id, { nota: Number(nota), comentario });
+                  } else {
+                    await criarAvaliacao(user.id, exposicao.id, Number(nota), comentario);
+                  }
+                  await load();
+                }, avaliacaoExistente ? 'Avaliacao atualizada!' : 'Avaliacao registrada!')
               }
             />
           </Card>
         )}
       </ScrollView>
+
+      <FormModal visible={showEdit} title="Editar exposicao" onClose={() => setShowEdit(false)}>
+        <Input label="Titulo" value={titulo} onChangeText={setTitulo} />
+        <Input label="Descricao" value={descricao} onChangeText={setDescricao} />
+        <Input label="Data inicio (AAAA-MM-DD)" value={dataInicio} onChangeText={setDataInicio} />
+        <Input label="Data fim (AAAA-MM-DD)" value={dataFim} onChangeText={setDataFim} />
+        <Button label="Salvar" loading={loadingAction} onPress={salvarEdicao} />
+      </FormModal>
 
       <FormModal visible={showAddObra} title="Vincular obra" onClose={() => setShowAddObra(false)}>
         <OptionPicker

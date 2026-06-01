@@ -12,9 +12,13 @@ import type {
   Ingresso,
   ObraArte,
   PaginatedResponse,
+  Pagamento,
   RegisterPayload,
   Reserva,
   Restauracao,
+  CreateFuncionarioPayload,
+  CreateArtistaPayload,
+  Funcionario,
 } from './types';
 
 export async function loginUser(username: string, password: string): Promise<AuthUser> {
@@ -56,6 +60,9 @@ export const fetchCategorias = () =>
   apiGet<PaginatedResponse<CategoriaObra>>('/categorias-obra/').then((d) => d.results);
 export const createCategoria = (payload: Omit<CategoriaObra, 'id'>) =>
   apiPost<CategoriaObra>('/categorias-obra/', payload);
+export const updateCategoria = (id: number, payload: Partial<CategoriaObra>) =>
+  apiPatch<CategoriaObra>(`/categorias-obra/${id}/`, payload);
+export const deleteCategoria = (id: number) => apiDelete(`/categorias-obra/${id}/`);
 
 // —— ObraArte (Funcionario: cadastrarObra) ——
 export const fetchObras = (params?: { search?: string; categoria?: number }) =>
@@ -80,6 +87,7 @@ export const createCertificado = (payload: Omit<Certificado, 'id'>) =>
   apiPost<Certificado>('/certificados/', payload);
 export const updateCertificado = (id: number, payload: Partial<Certificado>) =>
   apiPatch<Certificado>(`/certificados/${id}/`, payload);
+export const deleteCertificado = (id: number) => apiDelete(`/certificados/${id}/`);
 
 // —— Artista ——
 export const fetchArtistas = () =>
@@ -131,28 +139,80 @@ export const fetchAvaliacoesVisitante = (visitanteId: number) =>
     visitante: String(visitanteId),
   }).then((d) => d.results);
 
-export const comprarIngresso = (visitanteId: number, exposicaoId: number, valor = '60.00') =>
-  apiPost<Ingresso>('/ingressos/', {
+export const comprarIngresso = async (
+  visitanteId: number,
+  exposicaoId: number,
+  valor = '60.00',
+  metodo: Pagamento['metodo'] = 'pix',
+) => {
+  const ingresso = await apiPost<Ingresso>('/ingressos/', {
     visitante: visitanteId,
     exposicao: exposicaoId,
     tipo: 'inteira',
     valor,
     status: 'ativo',
   });
+  await createPagamento({
+    valor,
+    metodo,
+    status: 'pago',
+    ingresso: ingresso.id,
+    reserva: null,
+    restauracao: null,
+  });
+  return ingresso;
+};
 
-export const criarReserva = (
+export const criarReserva = async (
   visitanteId: number,
   exposicaoId: number,
   quantidade: number,
   dataReserva: string,
-) =>
-  apiPost<Reserva>('/reservas/', {
+  valorReserva = '40.00',
+  metodo: Pagamento['metodo'] = 'pix',
+) => {
+  const reserva = await apiPost<Reserva>('/reservas/', {
     visitante: visitanteId,
     exposicao: exposicaoId,
     quantidade_pessoas: quantidade,
     data_reserva: dataReserva,
     status: 'confirmada',
   });
+  await createPagamento({
+    valor: valorReserva,
+    metodo,
+    status: 'pago',
+    ingresso: null,
+    reserva: reserva.id,
+    restauracao: null,
+  });
+  return reserva;
+};
+
+export const updateIngresso = (id: number, payload: Partial<Ingresso>) =>
+  apiPatch<Ingresso>(`/ingressos/${id}/`, payload);
+
+export const cancelarIngresso = (id: number) =>
+  updateIngresso(id, { status: 'cancelado' });
+
+export const updateReserva = (id: number, payload: Partial<Reserva>) =>
+  apiPatch<Reserva>(`/reservas/${id}/`, payload);
+
+export const cancelarReserva = (id: number) =>
+  updateReserva(id, { status: 'cancelada' });
+
+export const updateAvaliacao = (id: number, payload: Partial<Avaliacao>) =>
+  apiPatch<Avaliacao>(`/avaliacoes/${id}/`, payload);
+
+export const deleteAvaliacao = (id: number) => apiDelete(`/avaliacoes/${id}/`);
+
+export const fetchAvaliacaoExposicao = async (visitanteId: number, exposicaoId: number) => {
+  const list = await apiGet<PaginatedResponse<Avaliacao>>('/avaliacoes/', {
+    visitante: String(visitanteId),
+    exposicao: String(exposicaoId),
+  }).then((d) => d.results);
+  return list[0] ?? null;
+};
 
 export const criarAvaliacao = (
   visitanteId: number,
@@ -187,6 +247,47 @@ export const createRestauracao = (payload: {
 
 export const updateRestauracao = (id: number, payload: Partial<Restauracao>) =>
   apiPatch<Restauracao>(`/restauracoes/${id}/`, payload);
+
+export const finalizarRestauracao = (id: number, dataFim?: string) =>
+  updateRestauracao(id, { data_fim: dataFim ?? new Date().toISOString().slice(0, 10) });
+
+export const deleteRestauracao = (id: number) => apiDelete(`/restauracoes/${id}/`);
+
+// —— Pagamentos ——
+export const fetchPagamentos = () =>
+  apiGet<PaginatedResponse<Pagamento>>('/pagamentos/').then((d) => d.results);
+
+export const createPagamento = (payload: Omit<Pagamento, 'id' | 'data_pagamento'>) =>
+  apiPost<Pagamento>('/pagamentos/', payload);
+
+export const updatePagamento = (id: number, payload: Partial<Pagamento>) =>
+  apiPatch<Pagamento>(`/pagamentos/${id}/`, payload);
+
+export const estornarPagamento = (id: number) =>
+  updatePagamento(id, { status: 'estornado' });
+
+// —— Funcionarios / Artistas (admin) ——
+export const fetchFuncionarios = () =>
+  apiGet<PaginatedResponse<Funcionario>>('/funcionarios/').then((d) => d.results);
+
+export const createFuncionario = (payload: CreateFuncionarioPayload) =>
+  apiPost<Funcionario>('/funcionarios/', payload);
+
+export const updateFuncionario = (id: number, payload: Partial<CreateFuncionarioPayload>) =>
+  apiPatch<Funcionario>(`/funcionarios/${id}/`, payload);
+
+export const deleteFuncionario = (id: number) => apiDelete(`/funcionarios/${id}/`);
+
+export const fetchArtistasAdmin = () =>
+  apiGet<PaginatedResponse<Artista>>('/artistas/').then((d) => d.results);
+
+export const createArtistaAdmin = (payload: CreateArtistaPayload) =>
+  apiPost<Artista>('/artistas/', payload);
+
+export const updateArtistaAdmin = (id: number, payload: Partial<CreateArtistaPayload>) =>
+  apiPatch<Artista>(`/artistas/${id}/`, payload);
+
+export const deleteArtistaAdmin = (id: number) => apiDelete(`/artistas/${id}/`);
 
 export async function fetchDashboardCounts() {
   const [galerias, obras, exposicoes] = await Promise.all([

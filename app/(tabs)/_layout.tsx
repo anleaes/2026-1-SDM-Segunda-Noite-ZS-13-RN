@@ -6,7 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { colors } from '@/theme/colors';
 
 export default function TabLayout() {
-  const { user, loading } = useAuth();
+  const { user, loading, canStaff } = useAuth();
 
   if (loading) return <LoadingScreen />;
   if (!user) return <Redirect href="/login" />;
@@ -50,6 +50,14 @@ export default function TabLayout() {
         options={{
           title: 'Exposicoes',
           tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="categorias"
+        options={{
+          title: 'Categorias',
+          href: canStaff ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="folder-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

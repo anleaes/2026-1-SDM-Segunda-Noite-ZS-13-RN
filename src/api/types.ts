@@ -132,6 +132,43 @@ export interface ArtistaObra {
   data_participacao: string;
 }
 
+export interface Pagamento {
+  id: number;
+  valor: string;
+  data_pagamento: string;
+  metodo: 'pix' | 'cartao' | 'dinheiro';
+  status: 'pendente' | 'pago' | 'estornado';
+  ingresso: number | null;
+  reserva: number | null;
+  restauracao: number | null;
+}
+
+export interface CreateFuncionarioPayload {
+  username: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  cpf: string;
+  telefone?: string;
+  cargo: string;
+  salario: string;
+  data_admissao: string;
+  galeria: number | null;
+}
+
+export interface CreateArtistaPayload {
+  username: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  cpf: string;
+  telefone?: string;
+  nacionalidade: string;
+  estilo_artistico: string;
+}
+
 export interface RegisterPayload {
   username: string;
   password: string;

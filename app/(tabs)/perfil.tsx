@@ -4,23 +4,37 @@ import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react
 
 import {
   buildFuncionarioRelatorio,
+  cancelarIngresso,
+  cancelarReserva,
+  createArtistaObra,
+  deleteAvaliacao,
+  deleteArtistaObra,
+  deleteRestauracao,
   fetchArtistaObras,
   fetchAvaliacoesVisitante,
   fetchDashboardCounts,
   fetchExposicoes,
   fetchIngressosVisitante,
   fetchObra,
+  fetchObras,
   fetchReservasVisitante,
   fetchRestauracoes,
   fetchRestauracoesFuncionario,
+  finalizarRestauracao,
   updateAccount,
+  updateAvaliacao,
+  updateRestauracao,
 } from '@/api/services';
-import type { Avaliacao, Ingresso, ObraArte, Reserva, Restauracao } from '@/api/types';
-import { FormModal } from '@/components/forms';
+import type { ArtistaObra, Avaliacao, Ingresso, ObraArte, Reserva, Restauracao } from '@/api/types';
+import { FormModal, OptionPicker } from '@/components/forms';
 import { Badge, Button, Card, ErrorState, Input, LoadingScreen, ScreenHeader } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { colors, spacing } from '@/theme/colors';
 import { formatCurrency, formatDate, statusLabel } from '@/utils/format';
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export default function PerfilScreen() {
   const {
@@ -38,7 +52,9 @@ export default function PerfilScreen() {
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [avaliacoes, setAvaliacoes] = useState<Avaliacao[]>([]);
   const [restauracoes, setRestauracoes] = useState<Restauracao[]>([]);
+  const [linksArtista, setLinksArtista] = useState<ArtistaObra[]>([]);
   const [obrasArtista, setObrasArtista] = useState<ObraArte[]>([]);
+  const [todasObras, setTodasObras] = useState<ObraArte[]>([]);
   const [exposicaoMap, setExposicaoMap] = useState<Record<number, string>>({});
   const [obraMap, setObraMap] = useState<Record<number, string>>({});
   const [relatorio, setRelatorio] = useState<ReturnType<typeof buildFuncionarioRelatorio> | null>(null);
@@ -46,9 +62,20 @@ export default function PerfilScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const [showVincularObra, setShowVincularObra] = useState(false);
+  const [showEditAv, setShowEditAv] = useState(false);
+  const [showEditRest, setShowEditRest] = useState(false);
+  const [editingAv, setEditingAv] = useState<Avaliacao | null>(null);
+  const [editingRest, setEditingRest] = useState<Restauracao | null>(null);
   const [saving, setSaving] = useState(false);
   const [nacionalidade, setNacionalidade] = useState('');
   const [estilo, setEstilo] = useState('');
+  const [obraId, setObraId] = useState<number | null>(null);
+  const [funcaoObra, setFuncaoObra] = useState('Autor');
+  const [notaEdit, setNotaEdit] = useState('5');
+  const [comentarioEdit, setComentarioEdit] = useState('');
+  const [restDescEdit, setRestDescEdit] = useState('');
+  const [restCustoEdit, setRestCustoEdit] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -91,10 +118,14 @@ export default function PerfilScreen() {
       setNacionalidade(user.nacionalidade ?? '');
       setEstilo(user.estilo_artistico ?? '');
       const links = await fetchArtistaObras(user.id);
+      setLinksArtista(links);
       const obras = await Promise.all(links.map((l) => fetchObra(l.obra)));
       setObrasArtista(obras);
+      const all = await fetchObras();
+      setTodasObras(all);
+      if (!obraId && all[0]) setObraId(all[0].id);
     }
-  }, [user, refreshAccount]);
+  }, [user, refreshAccount, obraId]);
 
   useEffect(() => {
     load()
@@ -131,6 +162,56 @@ export default function PerfilScreen() {
     }
   }
 
+  async function vincularObra() {
+    if (!user || !obraId) return;
+    try {
+      setSaving(true);
+      await createArtistaObra({
+        artista: user.id,
+        obra: obraId,
+        funcao: funcaoObra.trim() || 'Autor',
+        data_participacao: todayISO(),
+      });
+      setShowVincularObra(false);
+      await load();
+      Alert.alert('Sucesso', 'Obra vinculada ao portfolio.');
+    } catch (e) {
+      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao vincular.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function salvarAvaliacao() {
+    if (!editingAv) return;
+    try {
+      setSaving(true);
+      await updateAvaliacao(editingAv.id, { nota: Number(notaEdit), comentario: comentarioEdit });
+      setShowEditAv(false);
+      await load();
+      Alert.alert('Sucesso', 'Avaliacao atualizada.');
+    } catch (e) {
+      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao salvar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function salvarRestauracaoPerfil() {
+    if (!editingRest) return;
+    try {
+      setSaving(true);
+      await updateRestauracao(editingRest.id, { descricao: restDescEdit, custo: restCustoEdit });
+      setShowEditRest(false);
+      await load();
+      Alert.alert('Sucesso', 'Restauracao atualizada.');
+    } catch (e) {
+      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao salvar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleLogout() {
     await logout();
     router.replace('/login');
@@ -158,85 +239,160 @@ export default function PerfilScreen() {
           {user.telefone ? <Text style={styles.meta}>{user.telefone}</Text> : null}
         </Card>
 
-        {isFuncionario && (
-          <>
-            <Card>
-              <Text style={styles.sectionTitle}>Dados profissionais</Text>
-              {user.cargo ? <Text style={styles.item}>Cargo: {user.cargo}</Text> : null}
-              {user.galeria_nome ? <Text style={styles.item}>Galeria: {user.galeria_nome}</Text> : null}
-              {user.data_admissao ? <Text style={styles.item}>Admissao: {formatDate(user.data_admissao)}</Text> : null}
-            </Card>
+        {isAdmin && (
+          <Card>
+            <Text style={styles.sectionTitle}>Administracao</Text>
+            <Text style={styles.cardText}>Gerencie funcionarios e artistas do sistema.</Text>
+            <Button label="Painel admin" icon="shield-outline" onPress={() => router.push('/admin')} />
+          </Card>
+        )}
 
-            {relatorio && (
-              <Card>
-                <Text style={styles.sectionTitle}>Relatorio operacional</Text>
-                <Text style={styles.item}>Funcionario: {relatorio.funcionario}</Text>
-                <Text style={styles.item}>Cargo: {relatorio.cargo}</Text>
-                <Text style={styles.item}>Galeria: {relatorio.galeria}</Text>
-                <Text style={styles.item}>Galerias no sistema: {relatorio.acervo.galerias}</Text>
-                <Text style={styles.item}>Obras no acervo: {relatorio.acervo.obras}</Text>
-                <Text style={styles.item}>Exposicoes: {relatorio.acervo.exposicoes}</Text>
-                <Text style={styles.item}>Restauracoes realizadas: {relatorio.restauracoes}</Text>
-                <Text style={styles.item}>Custo total restauracoes: R$ {relatorio.custoRestauracoes}</Text>
-                <Text style={styles.muted}>Gerado em {relatorio.geradoEm}</Text>
-              </Card>
-            )}
-          </>
+        {isFuncionario && relatorio && (
+          <Card>
+            <Text style={styles.sectionTitle}>Relatorio operacional</Text>
+            <Text style={styles.item}>Galerias: {relatorio.acervo.galerias} · Obras: {relatorio.acervo.obras} · Exposicoes: {relatorio.acervo.exposicoes}</Text>
+            <Text style={styles.item}>Restauracoes: {relatorio.restauracoes} · Custo: R$ {relatorio.custoRestauracoes}</Text>
+          </Card>
         )}
 
         {isArtista && (
           <>
             <Card>
-              <Text style={styles.sectionTitle}>Dados artisticos</Text>
-              {user.nacionalidade ? <Text style={styles.item}>Nacionalidade: {user.nacionalidade}</Text> : null}
-              {user.estilo_artistico ? <Text style={styles.item}>Estilo: {user.estilo_artistico}</Text> : null}
-              <Button label="Atualizar portfolio" variant="secondary" icon="brush-outline" onPress={() => setShowPortfolio(true)} />
+              <Text style={styles.sectionTitle}>Portfolio</Text>
+              <Button label="Atualizar perfil artistico" variant="secondary" icon="brush-outline" onPress={() => setShowPortfolio(true)} />
+              <Button label="+ Vincular obra" variant="secondary" icon="add-outline" onPress={() => setShowVincularObra(true)} />
             </Card>
-
             <Section title={`Minhas obras (${obrasArtista.length})`}>
-              {obrasArtista.map((obra) => (
-                <Text key={obra.id} style={styles.item}>
-                  {obra.titulo} · {obra.tecnica} · {obra.ano_criacao}
-                </Text>
-              ))}
-              {!obrasArtista.length && <Text style={styles.empty}>Nenhuma obra vinculada.</Text>}
+              {linksArtista.map((link) => {
+                const obra = obrasArtista.find((o) => o.id === link.obra);
+                return (
+                  <View key={link.id} style={styles.rowItem}>
+                    <Text style={styles.item}>
+                      {obra?.titulo ?? `Obra #${link.obra}`} · {link.funcao}
+                    </Text>
+                    <Button
+                      label="Desvincular"
+                      variant="ghost"
+                      onPress={() =>
+                        Alert.alert('Desvincular', 'Remover obra do portfolio?', [
+                          { text: 'Cancelar', style: 'cancel' },
+                          {
+                            text: 'Remover',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteArtistaObra(link.id);
+                              await load();
+                            },
+                          },
+                        ])
+                      }
+                    />
+                  </View>
+                );
+              })}
+              {!linksArtista.length && <Text style={styles.empty}>Nenhuma obra vinculada.</Text>}
             </Section>
           </>
-        )}
-
-        {isAdmin && (
-          <Card>
-            <Text style={styles.cardText}>
-              Administrador: gerencie galerias (criar/editar), acervo e exposicoes pelo app. Restauracoes de todo o sistema listadas abaixo.
-            </Text>
-          </Card>
         )}
 
         {isVisitante && (
           <>
             <Section title={`Ingressos (${ingressos.length})`}>
               {ingressos.map((item) => (
-                <Text key={item.id} style={styles.item}>
-                  {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {item.tipo} · {formatCurrency(item.valor)}
-                </Text>
+                <View key={item.id} style={styles.rowItem}>
+                  <Text style={styles.item}>
+                    {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {item.tipo} · {formatCurrency(item.valor)} · {statusLabel(item.status)}
+                  </Text>
+                  {item.status === 'ativo' && (
+                    <Button
+                      label="Cancelar"
+                      variant="ghost"
+                      onPress={() =>
+                        Alert.alert('Cancelar ingresso', 'Confirmar cancelamento?', [
+                          { text: 'Nao', style: 'cancel' },
+                          {
+                            text: 'Sim',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await cancelarIngresso(item.id);
+                              await load();
+                            },
+                          },
+                        ])
+                      }
+                    />
+                  )}
+                </View>
               ))}
               {!ingressos.length && <Text style={styles.empty}>Nenhum ingresso ainda.</Text>}
             </Section>
 
             <Section title={`Reservas (${reservas.length})`}>
               {reservas.map((item) => (
-                <Text key={item.id} style={styles.item}>
-                  {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {formatDate(item.data_reserva)} · {item.quantidade_pessoas} pessoas · {statusLabel(item.status)}
-                </Text>
+                <View key={item.id} style={styles.rowItem}>
+                  <Text style={styles.item}>
+                    {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {formatDate(item.data_reserva)} · {statusLabel(item.status)}
+                  </Text>
+                  {item.status !== 'cancelada' && (
+                    <Button
+                      label="Cancelar"
+                      variant="ghost"
+                      onPress={() =>
+                        Alert.alert('Cancelar reserva', 'Confirmar cancelamento?', [
+                          { text: 'Nao', style: 'cancel' },
+                          {
+                            text: 'Sim',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await cancelarReserva(item.id);
+                              await load();
+                            },
+                          },
+                        ])
+                      }
+                    />
+                  )}
+                </View>
               ))}
               {!reservas.length && <Text style={styles.empty}>Nenhuma reserva ainda.</Text>}
             </Section>
 
             <Section title={`Avaliacoes (${avaliacoes.length})`}>
               {avaliacoes.map((item) => (
-                <Text key={item.id} style={styles.item}>
-                  {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {'★'.repeat(item.nota)} · {item.comentario}
-                </Text>
+                <View key={item.id} style={styles.rowItem}>
+                  <Text style={styles.item}>
+                    {exposicaoMap[item.exposicao] ?? `#${item.exposicao}`} · {'★'.repeat(item.nota)} · {item.comentario}
+                  </Text>
+                  <View style={styles.inlineActions}>
+                    <Button
+                      label="Editar"
+                      variant="ghost"
+                      onPress={() => {
+                        setEditingAv(item);
+                        setNotaEdit(String(item.nota));
+                        setComentarioEdit(item.comentario);
+                        setShowEditAv(true);
+                      }}
+                    />
+                    <Button
+                      label="Excluir"
+                      variant="ghost"
+                      onPress={() =>
+                        Alert.alert('Excluir avaliacao', 'Remover esta avaliacao?', [
+                          { text: 'Cancelar', style: 'cancel' },
+                          {
+                            text: 'Excluir',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteAvaliacao(item.id);
+                              await load();
+                            },
+                          },
+                        ])
+                      }
+                    />
+                  </View>
+                </View>
               ))}
               {!avaliacoes.length && <Text style={styles.empty}>Nenhuma avaliacao ainda.</Text>}
             </Section>
@@ -246,20 +402,54 @@ export default function PerfilScreen() {
         {(isFuncionario || isAdmin) && (
           <Section title={`Restauracoes (${restauracoes.length})`}>
             {restauracoes.map((item) => (
-              <Text key={item.id} style={styles.item}>
-                {obraMap[item.obra] ?? `Obra #${item.obra}`} · {formatCurrency(item.custo)} · {item.descricao}
-              </Text>
+              <View key={item.id} style={styles.rowItem}>
+                <Text style={styles.item}>
+                  {obraMap[item.obra] ?? `Obra #${item.obra}`} · {formatCurrency(item.custo)} · {item.descricao}
+                  {item.data_fim ? ` · Finalizada ${formatDate(item.data_fim)}` : ' · Em andamento'}
+                </Text>
+                <View style={styles.inlineActions}>
+                  <Button
+                    label="Editar"
+                    variant="ghost"
+                    onPress={() => {
+                      setEditingRest(item);
+                      setRestDescEdit(item.descricao);
+                      setRestCustoEdit(item.custo);
+                      setShowEditRest(true);
+                    }}
+                  />
+                  {!item.data_fim && (
+                    <Button
+                      label="Finalizar"
+                      variant="ghost"
+                      onPress={async () => {
+                        await finalizarRestauracao(item.id);
+                        await load();
+                      }}
+                    />
+                  )}
+                  <Button
+                    label="Excluir"
+                    variant="ghost"
+                    onPress={() =>
+                      Alert.alert('Excluir', 'Remover restauracao?', [
+                        { text: 'Cancelar', style: 'cancel' },
+                        {
+                          text: 'Excluir',
+                          style: 'destructive',
+                          onPress: async () => {
+                            await deleteRestauracao(item.id);
+                            await load();
+                          },
+                        },
+                      ])
+                    }
+                  />
+                </View>
+              </View>
             ))}
             {!restauracoes.length && <Text style={styles.empty}>Nenhuma restauracao registrada.</Text>}
           </Section>
-        )}
-
-        {canStaff && isFuncionario && (
-          <Card>
-            <Text style={styles.cardText}>
-              Como funcionario: crie galerias, cadastre obras, monte exposicoes e registre restauracoes.
-            </Text>
-          </Card>
         )}
 
         <Button
@@ -275,10 +465,28 @@ export default function PerfilScreen() {
         />
       </ScrollView>
 
-      <FormModal visible={showPortfolio} title="Atualizar portfolio (Artista)" onClose={() => setShowPortfolio(false)}>
-        <Input label="Nacionalidade" value={nacionalidade} onChangeText={setNacionalidade} placeholder="Brasileira" />
-        <Input label="Estilo artistico" value={estilo} onChangeText={setEstilo} placeholder="Contemporaneo" />
-        <Button label="Salvar portfolio" loading={saving} onPress={salvarPortfolio} />
+      <FormModal visible={showPortfolio} title="Atualizar portfolio" onClose={() => setShowPortfolio(false)}>
+        <Input label="Nacionalidade" value={nacionalidade} onChangeText={setNacionalidade} />
+        <Input label="Estilo artistico" value={estilo} onChangeText={setEstilo} />
+        <Button label="Salvar" loading={saving} onPress={salvarPortfolio} />
+      </FormModal>
+
+      <FormModal visible={showVincularObra} title="Vincular obra ao portfolio" onClose={() => setShowVincularObra(false)}>
+        <OptionPicker label="Obra" value={obraId} options={todasObras.map((o) => ({ id: o.id, label: o.titulo }))} onSelect={setObraId} />
+        <Input label="Funcao" value={funcaoObra} onChangeText={setFuncaoObra} placeholder="Autor, Co-autor..." />
+        <Button label="Vincular" loading={saving} onPress={vincularObra} />
+      </FormModal>
+
+      <FormModal visible={showEditAv} title="Editar avaliacao" onClose={() => setShowEditAv(false)}>
+        <Input label="Nota (1-5)" value={notaEdit} onChangeText={setNotaEdit} keyboardType="numeric" />
+        <Input label="Comentario" value={comentarioEdit} onChangeText={setComentarioEdit} />
+        <Button label="Salvar" loading={saving} onPress={salvarAvaliacao} />
+      </FormModal>
+
+      <FormModal visible={showEditRest} title="Editar restauracao" onClose={() => setShowEditRest(false)}>
+        <Input label="Descricao" value={restDescEdit} onChangeText={setRestDescEdit} />
+        <Input label="Custo" value={restCustoEdit} onChangeText={setRestCustoEdit} keyboardType="numeric" />
+        <Button label="Salvar" loading={saving} onPress={salvarRestauracaoPerfil} />
       </FormModal>
     </>
   );
@@ -301,8 +509,9 @@ const styles = StyleSheet.create({
   meta: { color: colors.textMuted, fontSize: 14 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
   sectionBody: { gap: spacing.sm },
-  item: { color: colors.textMuted, fontSize: 14, lineHeight: 20 },
+  item: { color: colors.textMuted, fontSize: 14, lineHeight: 20, flex: 1 },
+  rowItem: { gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  inlineActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   empty: { color: colors.textMuted, fontStyle: 'italic', fontSize: 14 },
-  muted: { color: colors.textMuted, fontSize: 12, fontStyle: 'italic' },
-  cardText: { color: colors.textMuted, lineHeight: 22 },
+  cardText: { color: colors.textMuted, lineHeight: 22, marginBottom: spacing.sm },
 });

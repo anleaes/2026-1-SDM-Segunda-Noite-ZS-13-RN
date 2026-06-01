@@ -1,16 +1,22 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   createCertificado,
   createRestauracao,
+  deleteCertificado,
   deleteObra,
+  deleteRestauracao,
   fetchCertificados,
   fetchObra,
+  fetchRestauracoes,
+  finalizarRestauracao,
+  updateCertificado,
   updateObra,
+  updateRestauracao,
 } from '@/api/services';
-import type { Certificado, ObraArte } from '@/api/types';
+import type { Certificado, ObraArte, Restauracao } from '@/api/types';
 import { FormModal } from '@/components/forms';
 import { Button, Card, ErrorState, Input, LoadingScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
@@ -26,11 +32,14 @@ export default function ObraDetailScreen() {
   const { user, canStaff, canRestauracao } = useAuth();
   const [obra, setObra] = useState<ObraArte | null>(null);
   const [certificado, setCertificado] = useState<Certificado | null>(null);
+  const [restauracoes, setRestauracoes] = useState<Restauracao[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
   const [showCert, setShowCert] = useState(false);
   const [showRest, setShowRest] = useState(false);
+  const [showEditRest, setShowEditRest] = useState(false);
+  const [editingRest, setEditingRest] = useState<Restauracao | null>(null);
   const [saving, setSaving] = useState(false);
   const [titulo, setTitulo] = useState('');
   const [tecnica, setTecnica] = useState('');
@@ -44,13 +53,22 @@ export default function ObraDetailScreen() {
   const load = useCallback(async () => {
     const obraId = Number(id);
     setError(null);
-    const [o, certs] = await Promise.all([fetchObra(obraId), fetchCertificados(obraId)]);
+    const [o, certs, rests] = await Promise.all([
+      fetchObra(obraId),
+      fetchCertificados(obraId),
+      fetchRestauracoes({ obra: obraId }),
+    ]);
     setObra(o);
     setCertificado(certs[0] ?? null);
+    setRestauracoes(rests);
     setTitulo(o.titulo);
     setTecnica(o.tecnica);
     setAno(String(o.ano_criacao));
     setValor(o.valor_estimado);
+    if (certs[0]) {
+      setCertCodigo(certs[0].codigo);
+      setCertOrgao(certs[0].orgao_responsavel);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -99,20 +117,46 @@ export default function ObraDetailScreen() {
     }
     try {
       setSaving(true);
-      const cert = await createCertificado({
-        obra: obra.id,
-        codigo: certCodigo.trim(),
-        data_emissao: todayISO(),
-        orgao_responsavel: certOrgao.trim(),
-      });
-      setCertificado(cert);
+      if (certificado) {
+        const cert = await updateCertificado(certificado.id, {
+          codigo: certCodigo.trim(),
+          orgao_responsavel: certOrgao.trim(),
+        });
+        setCertificado(cert);
+      } else {
+        const cert = await createCertificado({
+          obra: obra.id,
+          codigo: certCodigo.trim(),
+          data_emissao: todayISO(),
+          orgao_responsavel: certOrgao.trim(),
+        });
+        setCertificado(cert);
+      }
       setShowCert(false);
-      Alert.alert('Sucesso', 'Certificado emitido.');
+      Alert.alert('Sucesso', certificado ? 'Certificado atualizado.' : 'Certificado emitido.');
     } catch (e) {
-      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao emitir.');
+      Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao salvar certificado.');
     } finally {
       setSaving(false);
     }
+  }
+
+  function confirmarExclusaoCert() {
+    if (!certificado) return;
+    Alert.alert('Excluir certificado', 'Remover certificado desta obra?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteCertificado(certificado.id);
+          setCertificado(null);
+          setCertCodigo('');
+          setCertOrgao('');
+          Alert.alert('Sucesso', 'Certificado removido.');
+        },
+      },
+    ]);
   }
 
   async function salvarRestauracao() {
@@ -122,21 +166,35 @@ export default function ObraDetailScreen() {
     }
     try {
       setSaving(true);
-      await createRestauracao({
-        obra: obra.id,
-        funcionario: user.id,
-        descricao: restDesc.trim(),
-        custo: restCusto,
-        data_inicio: todayISO(),
-      });
+      if (editingRest) {
+        await updateRestauracao(editingRest.id, { descricao: restDesc.trim(), custo: restCusto });
+      } else {
+        await createRestauracao({
+          obra: obra.id,
+          funcionario: user.id,
+          descricao: restDesc.trim(),
+          custo: restCusto,
+          data_inicio: todayISO(),
+        });
+      }
       setShowRest(false);
+      setShowEditRest(false);
+      setEditingRest(null);
       setRestDesc('');
-      Alert.alert('Sucesso', 'Restauracao registrada.');
+      await load();
+      Alert.alert('Sucesso', editingRest ? 'Restauracao atualizada.' : 'Restauracao registrada.');
     } catch (e) {
       Alert.alert('Erro', e instanceof Error ? e.message : 'Falha ao registrar.');
     } finally {
       setSaving(false);
     }
+  }
+
+  function abrirEditarRest(r: Restauracao) {
+    setEditingRest(r);
+    setRestDesc(r.descricao);
+    setRestCusto(r.custo);
+    setShowEditRest(true);
   }
 
   if (loading) return <LoadingScreen />;
@@ -154,8 +212,14 @@ export default function ObraDetailScreen() {
             <Text style={styles.label}>Gestao de acervo</Text>
             <Button label="Editar obra" variant="secondary" icon="create-outline" onPress={() => setShowEdit(true)} />
             <Button label="Excluir obra" variant="secondary" icon="trash-outline" onPress={confirmarExclusao} />
-            {!certificado && (
-              <Button label="Emitir certificado" variant="secondary" icon="document-outline" onPress={() => setShowCert(true)} />
+            <Button
+              label={certificado ? 'Editar certificado' : 'Emitir certificado'}
+              variant="secondary"
+              icon="document-outline"
+              onPress={() => setShowCert(true)}
+            />
+            {certificado && (
+              <Button label="Excluir certificado" variant="secondary" icon="trash-outline" onPress={confirmarExclusaoCert} />
             )}
           </Card>
         )}
@@ -163,7 +227,7 @@ export default function ObraDetailScreen() {
         {canRestauracao && (
           <Card>
             <Text style={styles.label}>Restauracao (Funcionario)</Text>
-            <Button label="Registrar restauracao" variant="secondary" icon="construct-outline" onPress={() => setShowRest(true)} />
+            <Button label="Registrar restauracao" variant="secondary" icon="construct-outline" onPress={() => { setEditingRest(null); setRestDesc(''); setShowRest(true); }} />
           </Card>
         )}
 
@@ -189,6 +253,61 @@ export default function ObraDetailScreen() {
             <Text style={styles.muted}>Nenhum certificado registrado.</Text>
           </Card>
         )}
+
+        {restauracoes.length > 0 && (
+          <Card>
+            <Text style={styles.label}>Restauracoes ({restauracoes.length})</Text>
+            {restauracoes.map((r) => (
+              <View key={r.id} style={styles.restRow}>
+                <Text style={styles.text}>{r.descricao}</Text>
+                <Text style={styles.muted}>
+                  {formatCurrency(r.custo)} · {formatDate(r.data_inicio)}
+                  {r.data_fim ? ` → ${formatDate(r.data_fim)}` : ' · Em andamento'}
+                </Text>
+                {canRestauracao && (
+                  <View style={styles.restActions}>
+                    <Button label="Editar" variant="ghost" onPress={() => abrirEditarRest(r)} />
+                    {!r.data_fim && (
+                      <Button
+                        label="Finalizar"
+                        variant="ghost"
+                        onPress={() =>
+                          Alert.alert('Finalizar', 'Marcar restauracao como concluida?', [
+                            { text: 'Cancelar', style: 'cancel' },
+                            {
+                              text: 'Finalizar',
+                              onPress: async () => {
+                                await finalizarRestauracao(r.id);
+                                await load();
+                              },
+                            },
+                          ])
+                        }
+                      />
+                    )}
+                    <Button
+                      label="Excluir"
+                      variant="ghost"
+                      onPress={() =>
+                        Alert.alert('Excluir', 'Remover restauracao?', [
+                          { text: 'Cancelar', style: 'cancel' },
+                          {
+                            text: 'Excluir',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteRestauracao(r.id);
+                              await load();
+                            },
+                          },
+                        ])
+                      }
+                    />
+                  </View>
+                )}
+              </View>
+            ))}
+          </Card>
+        )}
       </ScrollView>
 
       <FormModal visible={showEdit} title="Editar obra" onClose={() => setShowEdit(false)}>
@@ -199,16 +318,16 @@ export default function ObraDetailScreen() {
         <Button label="Salvar" loading={saving} onPress={salvarObra} />
       </FormModal>
 
-      <FormModal visible={showCert} title="Emitir certificado" onClose={() => setShowCert(false)}>
+      <FormModal visible={showCert} title={certificado ? 'Editar certificado' : 'Emitir certificado'} onClose={() => setShowCert(false)}>
         <Input label="Codigo" value={certCodigo} onChangeText={setCertCodigo} placeholder="CERT-2026-001" />
         <Input label="Orgao responsavel" value={certOrgao} onChangeText={setCertOrgao} placeholder="Instituto do Patrimonio" />
-        <Button label="Emitir" loading={saving} onPress={salvarCertificado} />
+        <Button label="Salvar" loading={saving} onPress={salvarCertificado} />
       </FormModal>
 
-      <FormModal visible={showRest} title="Registrar restauracao" onClose={() => setShowRest(false)}>
+      <FormModal visible={showRest || showEditRest} title={editingRest ? 'Editar restauracao' : 'Registrar restauracao'} onClose={() => { setShowRest(false); setShowEditRest(false); setEditingRest(null); }}>
         <Input label="Descricao" value={restDesc} onChangeText={setRestDesc} placeholder="Limpeza e consolidacao" />
         <Input label="Custo (R$)" value={restCusto} onChangeText={setRestCusto} keyboardType="numeric" />
-        <Button label="Registrar" loading={saving} onPress={salvarRestauracao} />
+        <Button label="Salvar" loading={saving} onPress={salvarRestauracao} />
       </FormModal>
     </>
   );
@@ -222,4 +341,6 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: '700', color: colors.accent, marginBottom: spacing.xs },
   text: { color: colors.text, lineHeight: 22 },
   muted: { color: colors.textMuted, fontStyle: 'italic' },
+  restRow: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, marginTop: spacing.sm, gap: spacing.xs },
+  restActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
 });
