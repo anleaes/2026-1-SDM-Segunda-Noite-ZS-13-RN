@@ -77,27 +77,29 @@ export default function PerfilScreen() {
   const [restDescEdit, setRestDescEdit] = useState('');
   const [restCustoEdit, setRestCustoEdit] = useState('');
 
+  const userId = user?.id;
+  const userRole = user?.role;
+
   const load = useCallback(async () => {
-    if (!user) return;
+    if (!userId || !userRole || !user) return;
     setError(null);
-    await refreshAccount();
 
     const exposicoes = await fetchExposicoes();
     setExposicaoMap(Object.fromEntries(exposicoes.map((e) => [e.id, e.titulo])));
 
-    if (user.role === 'visitante') {
+    if (userRole === 'visitante') {
       const [ing, res, av] = await Promise.all([
-        fetchIngressosVisitante(user.id),
-        fetchReservasVisitante(user.id),
-        fetchAvaliacoesVisitante(user.id),
+        fetchIngressosVisitante(userId),
+        fetchReservasVisitante(userId),
+        fetchAvaliacoesVisitante(userId),
       ]);
       setIngressos(ing);
       setReservas(res);
       setAvaliacoes(av);
     }
 
-    if (user.role === 'funcionario') {
-      const rest = await fetchRestauracoesFuncionario(user.id);
+    if (userRole === 'funcionario') {
+      const rest = await fetchRestauracoesFuncionario(userId);
       setRestauracoes(rest);
       const counts = await fetchDashboardCounts();
       setRelatorio(buildFuncionarioRelatorio(user, counts, rest));
@@ -106,7 +108,7 @@ export default function PerfilScreen() {
       setObraMap(Object.fromEntries(obras.map((o) => [o.id, o.titulo])));
     }
 
-    if (user.role === 'admin') {
+    if (userRole === 'admin') {
       const rest = await fetchRestauracoes();
       setRestauracoes(rest);
       const obraIds = [...new Set(rest.map((r) => r.obra))];
@@ -114,18 +116,16 @@ export default function PerfilScreen() {
       setObraMap(Object.fromEntries(obras.map((o) => [o.id, o.titulo])));
     }
 
-    if (user.role === 'artista') {
+    if (userRole === 'artista') {
       setNacionalidade(user.nacionalidade ?? '');
       setEstilo(user.estilo_artistico ?? '');
-      const links = await fetchArtistaObras(user.id);
+      const links = await fetchArtistaObras(userId);
       setLinksArtista(links);
       const obras = await Promise.all(links.map((l) => fetchObra(l.obra)));
       setObrasArtista(obras);
-      const all = await fetchObras();
-      setTodasObras(all);
-      if (!obraId && all[0]) setObraId(all[0].id);
+      setTodasObras(await fetchObras());
     }
-  }, [user, refreshAccount, obraId]);
+  }, [userId, userRole]);
 
   useEffect(() => {
     load()
@@ -136,6 +136,7 @@ export default function PerfilScreen() {
   async function onRefresh() {
     setRefreshing(true);
     try {
+      await refreshAccount();
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao atualizar.');
@@ -260,7 +261,15 @@ export default function PerfilScreen() {
             <Card>
               <Text style={styles.sectionTitle}>Portfolio</Text>
               <Button label="Atualizar perfil artistico" variant="secondary" icon="brush-outline" onPress={() => setShowPortfolio(true)} />
-              <Button label="+ Vincular obra" variant="secondary" icon="add-outline" onPress={() => setShowVincularObra(true)} />
+              <Button
+                label="+ Vincular obra"
+                variant="secondary"
+                icon="add-outline"
+                onPress={() => {
+                  if (!obraId && todasObras[0]) setObraId(todasObras[0].id);
+                  setShowVincularObra(true);
+                }}
+              />
             </Card>
             <Section title={`Minhas obras (${obrasArtista.length})`}>
               {linksArtista.map((link) => {

@@ -41,8 +41,7 @@ export default function ExposicoesScreen() {
     const [exps, gals] = await Promise.all([fetchExposicoes(), fetchGalerias()]);
     setItems(exps);
     setGalerias(gals);
-    if (!galeriaId && gals[0]) setGaleriaId(gals[0].id);
-  }, [galeriaId]);
+  }, []);
 
   useEffect(() => {
     load().catch((e) => setError(e instanceof Error ? e.message : 'Erro ao carregar exposicoes.')).finally(() => setLoading(false));
@@ -88,7 +87,16 @@ export default function ExposicoesScreen() {
         ListHeaderComponent={
           <View style={styles.headerWrap}>
             <ScreenHeader title="Exposicoes" subtitle="Mostras e eventos" />
-            {canStaff && <Button label="+ Nova exposicao" icon="add-outline" onPress={() => setShowForm(true)} />}
+            {canStaff && (
+              <Button
+                label="+ Nova exposicao"
+                icon="add-outline"
+                onPress={() => {
+                  if (!galeriaId && galerias[0]) setGaleriaId(galerias[0].id);
+                  setShowForm(true);
+                }}
+              />
+            )}
           </View>
         }
         ListEmptyComponent={<EmptyState message="Nenhuma exposicao encontrada." />}

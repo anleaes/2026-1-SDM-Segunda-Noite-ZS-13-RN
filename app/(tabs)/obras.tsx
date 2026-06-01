@@ -30,8 +30,7 @@ export default function ObrasScreen() {
     const [obras, cats] = await Promise.all([fetchObras(), fetchCategorias()]);
     setItems(obras);
     setCategorias(cats);
-    if (!categoriaId && cats[0]) setCategoriaId(cats[0].id);
-  }, [categoriaId]);
+  }, []);
 
   useEffect(() => {
     load().catch((e) => setError(e instanceof Error ? e.message : 'Erro ao carregar obras.')).finally(() => setLoading(false));
@@ -76,7 +75,16 @@ export default function ObrasScreen() {
         ListHeaderComponent={
           <View style={styles.headerWrap}>
             <ScreenHeader title="Obras de Arte" subtitle="Acervo do museu" />
-            {canStaff && <Button label="+ Nova obra" icon="add-outline" onPress={() => setShowForm(true)} />}
+            {canStaff && (
+              <Button
+                label="+ Nova obra"
+                icon="add-outline"
+                onPress={() => {
+                  if (!categoriaId && categorias[0]) setCategoriaId(categorias[0].id);
+                  setShowForm(true);
+                }}
+              />
+            )}
           </View>
         }
         ListEmptyComponent={<EmptyState message="Nenhuma obra cadastrada." />}

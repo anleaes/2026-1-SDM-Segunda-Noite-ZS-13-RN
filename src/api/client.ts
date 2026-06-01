@@ -91,17 +91,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-export async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
-  let fullPath = path;
-  if (params) {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') qs.set(key, value);
-    });
-    const query = qs.toString();
-    if (query) fullPath += `${path.includes('?') ? '&' : '?'}${query}`;
+/** Junta path + filtros opcionais. Ex: '/galerias/' + {search:'MASP'} → '/galerias/?search=MASP' */
+function buildUrlWithParams(path: string, params?: Record<string, string>): string {
+  if (!params) return path;
+
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) searchParams.set(key, value);
   }
-  return request<T>(fullPath);
+
+  const queryString = searchParams.toString();
+  if (!queryString) return path;
+
+  const separator = path.includes('?') ? '&' : '?';
+  return path + separator + queryString;
+}
+
+export async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
+  const url = buildUrlWithParams(path, params);
+  return request<T>(url);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
