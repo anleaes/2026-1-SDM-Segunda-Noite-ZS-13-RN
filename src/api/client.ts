@@ -1,29 +1,38 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-function resolveApiUrl(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (fromEnv) return fromEnv;
+const API_PORT = process.env.EXPO_PUBLIC_API_PORT ?? '8001';
 
+function getMetroHost(): string | undefined {
   const debuggerHost =
     Constants.expoConfig?.hostUri ??
     (Constants as { expoGoConfig?: { debuggerHost?: string } }).expoGoConfig?.debuggerHost;
 
-  if (debuggerHost) {
-    const host = debuggerHost.split(':')[0];
-    if (host && host !== 'localhost' && host !== '127.0.0.1') {
-      return `http://${host}:8000/api`;
-    }
+  return debuggerHost?.split(':')[0];
+}
+
+function resolveApiUrl(): string {
+  const metroHost = getMetroHost();
+
+  // Expo Go no celular: mesmo IP do QR code do Metro = Mac na rede Wi-Fi
+  if (metroHost && metroHost !== 'localhost' && metroHost !== '127.0.0.1') {
+    return `http://${metroHost}:${API_PORT}/api`;
   }
 
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:8000/api';
+  // Emulador Android → host machine
+  if (Platform.OS === 'android' && Constants.isDevice === false) {
+    return `http://10.0.2.2:${API_PORT}/api`;
   }
 
-  return 'http://127.0.0.1:8000/api';
+  // Simulador iOS → localhost do Mac
+  return `http://127.0.0.1:${API_PORT}/api`;
 }
 
 export const API_URL = resolveApiUrl();
+
+if (__DEV__) {
+  console.log('[API] base URL:', API_URL);
+}
 
 export class ApiError extends Error {
   status: number;
