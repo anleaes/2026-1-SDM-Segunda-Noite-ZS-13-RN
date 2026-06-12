@@ -19,6 +19,9 @@ export default function CategoriasScreen() {
   const [saving, setSaving] = useState(false);
   const [nome, setNome] = useState('');
   const [descricao, setDescricao] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<CategoriaObra | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -59,21 +62,23 @@ export default function CategoriasScreen() {
   }
 
   function confirmarExclusao(cat: CategoriaObra) {
-    Alert.alert('Excluir categoria', `Remover "${cat.nome}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Excluir',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteCategoria(cat.id);
-            await load();
-          } catch (e) {
-            Alert.alert('Erro', e instanceof Error ? e.message : 'Nao foi possivel excluir.');
-          }
-        },
-      },
-    ]);
+    setDeleteError(null);
+    setDeleteTarget(cat);
+  }
+
+  async function executarExclusao() {
+    if (!deleteTarget) return;
+    try {
+      setDeleting(true);
+      setDeleteError(null);
+      await deleteCategoria(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Nao foi possivel excluir.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   if (!canStaff) {
@@ -127,6 +132,21 @@ export default function CategoriasScreen() {
         <Input label="Descricao" value={descricao} onChangeText={setDescricao} />
         <Button label="Salvar" loading={saving} onPress={salvar} />
       </FormModal>
+
+      <FormModal
+        visible={deleteTarget !== null}
+        title="Excluir categoria"
+        onClose={() => {
+          if (!deleting) setDeleteTarget(null);
+        }}
+      >
+        <Text style={styles.confirmText}>
+          Remover &quot;{deleteTarget?.nome}&quot;? Esta acao nao pode ser desfeita.
+        </Text>
+        {deleteError ? <Text style={styles.confirmError}>{deleteError}</Text> : null}
+        <Button label="Excluir" loading={deleting} onPress={executarExclusao} />
+        <Button label="Cancelar" variant="secondary" disabled={deleting} onPress={() => setDeleteTarget(null)} />
+      </FormModal>
     </>
   );
 }
@@ -138,4 +158,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 17, fontWeight: '700', color: colors.text },
   meta: { color: colors.textMuted, fontSize: 14, marginTop: 4 },
   row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  confirmText: { color: colors.text, fontSize: 15, lineHeight: 22 },
+  confirmError: { color: '#e5484d', fontSize: 14, lineHeight: 20 },
 });
